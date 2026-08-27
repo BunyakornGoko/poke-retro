@@ -35,9 +35,9 @@ const POKEMON = [
 
 type Pokemon = readonly [string, string, string, string]
 type Card = { id: string; text: string; author: Pokemon; createdAt: number; voters: string[] }
-type Board = { columns: Record<string, Card[]>; actionItems: { id: string; text: string; owner: Pokemon; done: boolean }[]; phaseIndex: number; timerEndAt: number | null; timerRunning: boolean; timerMinutes: number; participants: string[] }
+type Board = { columns: Record<string, Card[]>; actionItems: { id: string; text: string; owner: Pokemon; done: boolean }[]; phaseIndex: number; timerEndAt: number | null; timerRunning: boolean; timerMinutes: number }
 
-const freshBoard = (): Board => ({ columns: { wentWell: [], notWell: [], improve: [] }, actionItems: [], phaseIndex: 0, timerEndAt: null, timerRunning: false, timerMinutes: 5, participants: [] })
+const freshBoard = (): Board => ({ columns: { wentWell: [], notWell: [], improve: [] }, actionItems: [], phaseIndex: 0, timerEndAt: null, timerRunning: false, timerMinutes: 5 })
 const IDENTITY_KEY = 'retro-identity-v1'
 const HOST_IDENTITY: Pokemon = ['Host', 'สตาฟจอใหญ่', 'HOST', 'blue']
 const uid = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`
@@ -75,13 +75,15 @@ export default function Page() {
   const [now, setNow] = useState(Date.now())
   const [isHost, setIsHost] = useState(false)
   const [localPhase, setLocalPhase] = useState<number | null>(null)
+  const [taken, setTaken] = useState<string[]>([])
+  const [joining, setJoining] = useState(false)
   const suppressPoll = useRef(false)
   const knownPhase = useRef<number | null>(null)
 
   const loadBoard = useCallback(async () => {
     try {
       const result = await fetch('/api/board').then((res) => res.json())
-      if (result) { setBoard({ ...result, participants: result.participants ?? [] }) }
+      if (result) { setBoard(result) }
       else { const next = freshBoard(); await fetch('/api/board', { method: 'POST', body: JSON.stringify(next) }); setBoard(next) }
     } catch { setBoard(freshBoard()) } finally { setLoading(false) }
   }, [])
@@ -90,6 +92,13 @@ export default function Page() {
   useEffect(() => { const tick = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(tick) }, [])
   useEffect(() => { if (new URLSearchParams(window.location.search).get('host') === '1') { setIsHost(true); setIdentity(HOST_IDENTITY); setJoined(true) } }, [])
   useEffect(() => { const savedName = localStorage.getItem(IDENTITY_KEY); const match = POKEMON.find((p) => p[0] === savedName); if (match) { setIdentity(match); setJoined(true) } }, [])
+  useEffect(() => {
+    if (joined) return
+    const fetchTaken = () => fetch('/api/participants').then((res) => res.json()).then((data) => setTaken(data.members ?? [])).catch(() => {})
+    fetchTaken()
+    const poll = setInterval(fetchTaken, 1000)
+    return () => clearInterval(poll)
+  }, [joined])
   useEffect(() => { if (board && knownPhase.current !== null && knownPhase.current !== board.phaseIndex) setLocalPhase(null); if (board) knownPhase.current = board.phaseIndex }, [board?.phaseIndex])
 
   const save = (next: Board) => { setBoard(next); suppressPoll.current = true; fetch('/api/board', { method: 'POST', body: JSON.stringify(next) }).finally(() => setTimeout(() => { suppressPoll.current = false }, 1000)) }
@@ -100,11 +109,20 @@ export default function Page() {
   const remaining = board?.timerEndAt ? Math.max(0, Math.floor((board.timerEndAt - now) / 1000)) : (board?.timerMinutes ?? 5) * 60
   const time = `${String(Math.floor(remaining / 60)).padStart(2, '0')}:${String(remaining % 60).padStart(2, '0')}`
 
-  const joinTeam = () => { if (!identity || !board) return; localStorage.setItem(IDENTITY_KEY, identity[0]); setJoined(true); if (!board.participants.includes(identity[0])) { const next = clone(); next.participants.push(identity[0]); save(next) } }
+  const joinTeam = async () => {
+    if (!identity || joining) return
+    setJoining(true)
+    try {
+      const res = await fetch('/api/participants', { method: 'POST', body: JSON.stringify({ name: identity[0] }) }).then((r) => r.json())
+      if (!res.ok) { setTaken((prev) => prev.includes(identity[0]) ? prev : [...prev, identity[0]]); setIdentity(null); alert('มีคนเลือกตัวนี้ไปแล้ว ลองเลือกตัวอื่นดูนะ'); return }
+      localStorage.setItem(IDENTITY_KEY, identity[0])
+      setJoined(true)
+    } finally { setJoining(false) }
+  }
 
   if (!joined) return <main className="join-screen"><div className="join-card">
     <div className="pokeball-mark"><span /></div><p className="eyebrow">POKÉMON RETROSPECTIVE</p><h1>ออกเดินทาง<br /><em>ไปพร้อมกับทีม</em></h1><p className="join-copy">เลือกโปเกม่อนคู่หูของคุณ แล้วมาแชร์ความคิดเห็นใน Sprint นี้กัน</p>
-    <PokemonPicker value={identity} onChange={setIdentity} taken={board?.participants} /><button className="primary-button join-button" disabled={!identity || !board} onClick={joinTeam}>เข้าร่วมทีม <ChevronRight size={18} /></button>
+    <PokemonPicker value={identity} onChange={setIdentity} taken={taken} /><button className="primary-button join-button" disabled={!identity || joining} onClick={joinTeam}>เข้าร่วมทีม <ChevronRight size={18} /></button>
     <p className="join-note"><Sparkles size={13} /> ไม่ต้องใช้ชื่อจริงในบอร์ดนี้</p>
   </div></main>
   if (loading || !board || !identity) return <main className="loading-screen">กำลังเตรียมสนามต่อสู้...</main>
@@ -116,7 +134,7 @@ export default function Page() {
   const setPhase = (index: number) => { const clamped = Math.max(0, Math.min(3, index)); if (isHost) { const next = clone(); next.phaseIndex = clamped; save(next) } else { setLocalPhase(clamped) } }
   const startTimer = () => { const next = clone(); next.timerEndAt = Date.now() + minutes * 60000; next.timerRunning = true; next.timerMinutes = minutes; save(next) }
   const resetTimer = () => { const next = clone(); next.timerEndAt = null; next.timerRunning = false; save(next) }
-  const changeIdentity = () => { if (isHost) return; const next = clone(); next.participants = next.participants.filter((name) => name !== identity[0]); save(next); localStorage.removeItem(IDENTITY_KEY); setIdentity(null); setJoined(false) }
+  const changeIdentity = () => { if (isHost) return; fetch('/api/participants', { method: 'DELETE', body: JSON.stringify({ name: identity[0] }) }); localStorage.removeItem(IDENTITY_KEY); setIdentity(null); setJoined(false) }
 
   return <main className="app-shell">
     <header className="topbar"><div className="brand"><div className="brand-ball" /><div><strong>Poké<span>Retro</span></strong><small>TEAM SPRINT ARENA</small></div></div><div className="header-right">{isHost ? <div className="trainer-chip"><PokemonAvatar pokemon={identity} size="sm" /><div><small>โหมด</small><b>จอใหญ่ (Host)</b></div></div> : <div className="trainer-chip"><PokemonAvatar pokemon={identity} size="sm" /><div><small>กำลังเล่นเป็น</small><b>{identity[0]}</b></div><button className="icon-button" onClick={changeIdentity} aria-label="เปลี่ยนตัว"><Repeat size={14} /></button></div>}{isHost && <div className="timer"><Clock3 size={17} /><b>{time}</b><input aria-label="นาที" type="number" min={1} max={60} value={minutes} onChange={(e) => setMinutes(Number(e.target.value) || 1)} /><button onClick={startTimer}>เริ่ม</button><button className="icon-button" onClick={resetTimer} aria-label="รีเซ็ตเวลา"><RotateCcw size={15} /></button></div>}</div></header>
