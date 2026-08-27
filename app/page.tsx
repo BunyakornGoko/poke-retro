@@ -83,6 +83,7 @@ export default function Page() {
   const loadBoard = useCallback(async () => {
     try {
       const result = await fetch('/api/board').then((res) => res.json())
+      if (suppressPoll.current) return
       if (result) { setBoard(result) }
       else { const next = freshBoard(); await fetch('/api/board', { method: 'POST', body: JSON.stringify(next) }); setBoard(next) }
     } catch { setBoard(freshBoard()) } finally { setLoading(false) }
