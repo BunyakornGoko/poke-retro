@@ -15,7 +15,8 @@ export async function POST(request: Request) {
 }
 
 export async function DELETE(request: Request) {
-  const { name } = await request.json()
-  await kv.srem(KEY, name)
+  const { name, all } = await request.json()
+  if (all) await kv.del(KEY)
+  else await kv.srem(KEY, name)
   return NextResponse.json({ ok: true })
 }
