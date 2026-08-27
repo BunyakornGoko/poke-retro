@@ -4,12 +4,12 @@ import { NextResponse } from 'next/server'
 const KEY = 'retro-board-pokemon-v1'
 
 export async function GET() {
-  const value = await kv.get<string>(KEY)
-  return NextResponse.json({ value })
+  const board = await kv.get(KEY)
+  return NextResponse.json(board)
 }
 
 export async function POST(request: Request) {
-  const value = await request.text()
-  await kv.set(KEY, value)
+  const board = await request.json()
+  await kv.set(KEY, board)
   return NextResponse.json({ ok: true })
 }

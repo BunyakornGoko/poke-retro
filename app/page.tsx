@@ -79,7 +79,7 @@ export default function Page() {
   const loadBoard = useCallback(async () => {
     try {
       const result = await fetch('/api/board').then((res) => res.json())
-      if (result?.value) { const parsed = JSON.parse(result.value); setBoard({ ...parsed, participants: parsed.participants ?? [] }) }
+      if (result) { setBoard({ ...result, participants: result.participants ?? [] }) }
       else { const next = freshBoard(); await fetch('/api/board', { method: 'POST', body: JSON.stringify(next) }); setBoard(next) }
     } catch { setBoard(freshBoard()) } finally { setLoading(false) }
   }, [])
