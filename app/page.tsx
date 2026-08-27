@@ -17,8 +17,6 @@ import {
   X,
 } from 'lucide-react'
 
-const STORAGE_KEY = 'retro-board-pokemon-v1'
-
 const COLUMNS = [
   { key: 'wentWell', title: 'ทำได้ดี', sub: 'สิ่งที่ทีมทำได้ดีใน Sprint นี้', color: 'mint' },
   { key: 'notWell', title: 'ทำได้ไม่ดี', sub: 'สิ่งที่ยังไม่เวิร์ค', color: 'coral' },
@@ -80,10 +78,9 @@ export default function Page() {
 
   const loadBoard = useCallback(async () => {
     try {
-      if (!window.storage) throw new Error('no storage')
-      const result = await window.storage.get(STORAGE_KEY, true)
+      const result = await fetch('/api/board').then((res) => res.json())
       if (result?.value) { const parsed = JSON.parse(result.value); setBoard({ ...parsed, participants: parsed.participants ?? [] }) }
-      else { const next = freshBoard(); await window.storage.set(STORAGE_KEY, JSON.stringify(next), true); setBoard(next) }
+      else { const next = freshBoard(); await fetch('/api/board', { method: 'POST', body: JSON.stringify(next) }); setBoard(next) }
     } catch { setBoard(freshBoard()) } finally { setLoading(false) }
   }, [])
   useEffect(() => { loadBoard() }, [loadBoard])
@@ -92,7 +89,7 @@ export default function Page() {
   useEffect(() => { if (new URLSearchParams(window.location.search).get('host') === '1') { setIsHost(true); setIdentity(HOST_IDENTITY); setJoined(true) } }, [])
   useEffect(() => { const savedName = localStorage.getItem(IDENTITY_KEY); const match = POKEMON.find((p) => p[0] === savedName); if (match) { setIdentity(match); setJoined(true) } }, [])
 
-  const save = (next: Board) => { setBoard(next); if (!window.storage) return; suppressPoll.current = true; window.storage.set(STORAGE_KEY, JSON.stringify(next), true).finally(() => setTimeout(() => { suppressPoll.current = false }, 1000)) }
+  const save = (next: Board) => { setBoard(next); suppressPoll.current = true; fetch('/api/board', { method: 'POST', body: JSON.stringify(next) }).finally(() => setTimeout(() => { suppressPoll.current = false }, 1000)) }
   const clone = () => JSON.parse(JSON.stringify(board)) as Board
   const me = identity?.[0] ?? ''
   const votes = useMemo(() => board ? COLUMNS.reduce((sum, col) => sum + board.columns[col.key].filter((card) => card.voters.includes(me)).length, 0) : 0, [board, me])
