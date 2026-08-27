@@ -7,6 +7,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Clock3,
+  Crown,
   Plus,
   Repeat,
   RotateCcw,
@@ -34,16 +35,18 @@ const POKEMON = [
   ['Vulpix', 'ロコン', '037', 'coral'], ['Mew', 'ミュウ', '151', 'pink'],
 ] as const
 
-type Pokemon = typeof POKEMON[number]
+type Pokemon = readonly [string, string, string, string]
 type Card = { id: string; text: string; author: Pokemon; createdAt: number; voters: string[] }
 type Board = { columns: Record<string, Card[]>; actionItems: { id: string; text: string; owner: Pokemon; done: boolean }[]; phaseIndex: number; timerEndAt: number | null; timerRunning: boolean; timerMinutes: number; participants: string[] }
 
 const freshBoard = (): Board => ({ columns: { wentWell: [], notWell: [], improve: [] }, actionItems: [], phaseIndex: 0, timerEndAt: null, timerRunning: false, timerMinutes: 5, participants: [] })
 const IDENTITY_KEY = 'retro-identity-v1'
+const HOST_IDENTITY: Pokemon = ['Host', 'สตาฟจอใหญ่', 'HOST', 'blue']
 const uid = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`
 const pokemonImage = (id: string) => `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/${Number(id)}.png`
 
 function PokemonAvatar({ pokemon, size = 'sm' }: { pokemon: Pokemon; size?: 'sm' | 'md' | 'lg' }) {
+  if (pokemon[0] === 'Host') return <div className={`pokemon-avatar pokemon-avatar-${size} host-avatar`} title="Host"><Crown size={size === 'lg' ? 34 : size === 'md' ? 22 : 15} /></div>
   return <div className={`pokemon-avatar pokemon-avatar-${size}`} title={pokemon[0]}><img src={pokemonImage(pokemon[2])} alt={`${pokemon[0]} avatar`} /></div>
 }
 
@@ -77,6 +80,7 @@ export default function Page() {
 
   const loadBoard = useCallback(async () => {
     try {
+      if (!window.storage) throw new Error('no storage')
       const result = await window.storage.get(STORAGE_KEY, true)
       if (result?.value) { const parsed = JSON.parse(result.value); setBoard({ ...parsed, participants: parsed.participants ?? [] }) }
       else { const next = freshBoard(); await window.storage.set(STORAGE_KEY, JSON.stringify(next), true); setBoard(next) }
@@ -85,7 +89,7 @@ export default function Page() {
   useEffect(() => { loadBoard() }, [loadBoard])
   useEffect(() => { const poll = setInterval(() => { if (!suppressPoll.current) loadBoard() }, 3000); return () => clearInterval(poll) }, [loadBoard])
   useEffect(() => { const tick = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(tick) }, [])
-  useEffect(() => { setIsHost(new URLSearchParams(window.location.search).get('host') === '1') }, [])
+  useEffect(() => { if (new URLSearchParams(window.location.search).get('host') === '1') { setIsHost(true); setIdentity(HOST_IDENTITY); setJoined(true) } }, [])
   useEffect(() => { const savedName = localStorage.getItem(IDENTITY_KEY); const match = POKEMON.find((p) => p[0] === savedName); if (match) { setIdentity(match); setJoined(true) } }, [])
 
   const save = (next: Board) => { setBoard(next); if (!window.storage) return; suppressPoll.current = true; window.storage.set(STORAGE_KEY, JSON.stringify(next), true).finally(() => setTimeout(() => { suppressPoll.current = false }, 1000)) }
@@ -108,19 +112,19 @@ export default function Page() {
   const addCard = (key: string) => { const text = (drafts[key] || '').trim(); if (!text) return; const next = clone(); next.columns[key].push({ id: uid(), text, author: identity, createdAt: Date.now(), voters: [] }); save(next); setDrafts({ ...drafts, [key]: '' }) }
   const toggleVote = (key: string, id: string) => { const next = clone(); const card = next.columns[key].find((item) => item.id === id); if (!card) return; const index = card.voters.indexOf(me); if (index >= 0) card.voters.splice(index, 1); else if (votes < 3) card.voters.push(me); save(next) }
   const deleteCard = (key: string, id: string) => { const next = clone(); next.columns[key] = next.columns[key].filter((item) => item.id !== id); save(next) }
-  const addAction = () => { if (!actionDraft.trim()) return; const next = clone(); next.actionItems.push({ id: uid(), text: actionDraft.trim(), owner: identity, done: false }); save(next); setActionDraft('') }
+  const addAction = () => { if (!isHost || !actionDraft.trim()) return; const next = clone(); next.actionItems.push({ id: uid(), text: actionDraft.trim(), owner: identity, done: false }); save(next); setActionDraft('') }
   const setPhase = (index: number) => { const next = clone(); next.phaseIndex = Math.max(0, Math.min(3, index)); save(next) }
   const startTimer = () => { const next = clone(); next.timerEndAt = Date.now() + minutes * 60000; next.timerRunning = true; next.timerMinutes = minutes; save(next) }
   const resetTimer = () => { const next = clone(); next.timerEndAt = null; next.timerRunning = false; save(next) }
-  const changeIdentity = () => { const next = clone(); next.participants = next.participants.filter((name) => name !== identity[0]); save(next); localStorage.removeItem(IDENTITY_KEY); setIdentity(null); setJoined(false) }
+  const changeIdentity = () => { if (isHost) return; const next = clone(); next.participants = next.participants.filter((name) => name !== identity[0]); save(next); localStorage.removeItem(IDENTITY_KEY); setIdentity(null); setJoined(false) }
 
   return <main className="app-shell">
-    <header className="topbar"><div className="brand"><div className="brand-ball" /><div><strong>Poké<span>Retro</span></strong><small>TEAM SPRINT ARENA</small></div></div><div className="header-right"><div className="trainer-chip"><PokemonAvatar pokemon={identity} size="sm" /><div><small>กำลังเล่นเป็น</small><b>{identity[0]}</b></div><button className="icon-button" onClick={changeIdentity} aria-label="เปลี่ยนตัว"><Repeat size={14} /></button></div>{isHost && <div className="timer"><Clock3 size={17} /><b>{time}</b><input aria-label="นาที" type="number" min={1} max={60} value={minutes} onChange={(e) => setMinutes(Number(e.target.value) || 1)} /><button onClick={startTimer}>เริ่ม</button><button className="icon-button" onClick={resetTimer} aria-label="รีเซ็ตเวลา"><RotateCcw size={15} /></button></div>}</div></header>
+    <header className="topbar"><div className="brand"><div className="brand-ball" /><div><strong>Poké<span>Retro</span></strong><small>TEAM SPRINT ARENA</small></div></div><div className="header-right">{isHost ? <div className="trainer-chip"><PokemonAvatar pokemon={identity} size="sm" /><div><small>โหมด</small><b>จอใหญ่ (Host)</b></div></div> : <div className="trainer-chip"><PokemonAvatar pokemon={identity} size="sm" /><div><small>กำลังเล่นเป็น</small><b>{identity[0]}</b></div><button className="icon-button" onClick={changeIdentity} aria-label="เปลี่ยนตัว"><Repeat size={14} /></button></div>}{isHost && <div className="timer"><Clock3 size={17} /><b>{time}</b><input aria-label="นาที" type="number" min={1} max={60} value={minutes} onChange={(e) => setMinutes(Number(e.target.value) || 1)} /><button onClick={startTimer}>เริ่ม</button><button className="icon-button" onClick={resetTimer} aria-label="รีเซ็ตเวลา"><RotateCcw size={15} /></button></div>}</div></header>
     <section className="hero"><div><p className="eyebrow">SQUAD RETROSPECTIVE · SPRINT 24</p><h1>ทีมของเรา <em>เก่งขึ้น</em><br />ได้อีกแค่ไหน?</h1><p>จับมือคู่หูของคุณ แล้วมาทบทวนการเดินทางครั้งนี้ไปด้วยกัน</p></div><div className="hero-badge"><Sparkles size={17} /><span><b>{votes}/3</b> โหวตที่ใช้ไป</span></div></section>
     <nav className="phase-nav"><button disabled={phase === 0} onClick={() => setPhase(phase - 1)} aria-label="ย้อนกลับ"><ChevronLeft size={18} /></button>{PHASES.map((item, index) => <button key={item} onClick={() => setPhase(index)} className={index === phase ? 'active' : ''}><span>{index + 1}</span>{item}{index === phase && <Check size={14} />}</button>)}<button disabled={phase === 3} onClick={() => setPhase(phase + 1)} aria-label="ถัดไป"><ChevronRight size={18} /></button></nav>
     <div className="phase-hint"><Sparkles size={14} /> {['แต่ละคนเขียนความคิดเห็นลงในคอลัมน์', 'อ่านและพูดคุยโน้ตของทุกคนด้วยกัน', 'แต่ละคนมี 3 โหวต เลือกโน้ตที่สำคัญที่สุด', 'แปลงโน้ตที่โหวตสูงสุดเป็น Action Items'][phase]}</div>
     <section className="columns-grid">{COLUMNS.map((column) => { const cards = [...board.columns[column.key]].sort((a, b) => phase >= 2 ? b.voters.length - a.voters.length : a.createdAt - b.createdAt); return <article key={column.key} className={`retro-column ${column.color}`}><div className="column-heading"><div><h2>{column.title}</h2><p>{column.sub}</p></div><span>{cards.length}</span></div>{phase === 0 && <div className="note-input"><input value={drafts[column.key] || ''} onChange={(e) => setDrafts({ ...drafts, [column.key]: e.target.value })} onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing && e.keyCode !== 229) addCard(column.key) }} placeholder="เขียนโน้ตของคุณ..." /><button onClick={() => addCard(column.key)} aria-label="เพิ่มโน้ต"><Plus size={18} /></button></div>}<div className="cards-list">{cards.length === 0 && <div className="empty-note">ยังไม่มีโน้ต<br /><small>เป็นคนแรกที่เริ่มแชร์ได้เลย</small></div>}{cards.map((card) => { const voted = card.voters.includes(me); return <div className="retro-card" key={card.id}><p>{card.text}</p><div className="card-meta"><div className="author"><PokemonAvatar pokemon={card.author} size="sm" /><span>{card.author[0]}</span></div><div className="card-actions">{phase >= 2 && <button className={`vote-button ${voted ? 'voted' : ''}`} onClick={() => phase === 2 && toggleVote(column.key, card.id)} disabled={phase !== 2}><ThumbsUp size={13} /> {card.voters.length}</button>}{card.author[0] === me && phase === 0 && <button className="delete-button" onClick={() => deleteCard(column.key, card.id)} aria-label="ลบโน้ต"><X size={15} /></button>}</div></div></div>})}</div></article> })}</section>
-    <section className="actions-section"><div className="section-title"><div><p className="eyebrow">QUEST LOG</p><h2>Action Items <span>สิ่งที่เราจะลงมือทำ</span></h2></div><div className="action-count">{board.actionItems.filter((item) => item.done).length}/{board.actionItems.length} สำเร็จ</div></div><div className="action-form"><input value={actionDraft} onChange={(e) => setActionDraft(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing && e.keyCode !== 229) addAction() }} placeholder="เพิ่ม Action item ที่อยากให้ทีมทำ..." /><button className="primary-button" onClick={addAction}><Plus size={17} /> เพิ่มภารกิจ</button></div><div className="action-list">{board.actionItems.map((item) => <div className={`action-row ${item.done ? 'done' : ''}`} key={item.id}><button onClick={() => { const next = clone(); const target = next.actionItems.find((action) => action.id === item.id); if (target) target.done = !target.done; save(next) }} className="check-action" aria-label="ทำเสร็จแล้ว">{item.done ? <CheckSquare size={19} /> : <span />}</button><span>{item.text}</span><PokemonAvatar pokemon={item.owner} size="sm" /><b>{item.owner[0]}</b><button className="delete-button" onClick={() => { const next = clone(); next.actionItems = next.actionItems.filter((action) => action.id !== item.id); save(next) }} aria-label="ลบภารกิจ"><Trash2 size={15} /></button></div>)}</div></section>
+    <section className="actions-section"><div className="section-title"><div><p className="eyebrow">QUEST LOG</p><h2>Action Items <span>สิ่งที่เราจะลงมือทำ</span></h2></div><div className="action-count">{board.actionItems.filter((item) => item.done).length}/{board.actionItems.length} สำเร็จ</div></div>{isHost && <div className="action-form"><input value={actionDraft} onChange={(e) => setActionDraft(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing && e.keyCode !== 229) addAction() }} placeholder="เพิ่ม Action item ที่อยากให้ทีมทำ..." /><button className="primary-button" onClick={addAction}><Plus size={17} /> เพิ่มภารกิจ</button></div>}<div className="action-list">{board.actionItems.map((item) => <div className={`action-row ${item.done ? 'done' : ''}`} key={item.id}><button onClick={() => { const next = clone(); const target = next.actionItems.find((action) => action.id === item.id); if (target) target.done = !target.done; save(next) }} className="check-action" aria-label="ทำเสร็จแล้ว">{item.done ? <CheckSquare size={19} /> : <span />}</button><span>{item.text}</span><PokemonAvatar pokemon={item.owner} size="sm" /><b>{item.owner[0]}</b><button className="delete-button" onClick={() => { const next = clone(); next.actionItems = next.actionItems.filter((action) => action.id !== item.id); save(next) }} aria-label="ลบภารกิจ"><Trash2 size={15} /></button></div>)}</div></section>
     <footer><span>POKÉRETRO · SPRINT 15</span><button onClick={() => { if (confirm('ล้างบอร์ดทั้งหมด?')) save(freshBoard()) }}>รีเซ็ตบอร์ด</button></footer>
   </main>
 }
