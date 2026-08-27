@@ -8,6 +8,7 @@ import {
   ChevronRight,
   Clock3,
   Plus,
+  Repeat,
   RotateCcw,
   Sparkles,
   ThumbsUp,
@@ -35,9 +36,10 @@ const POKEMON = [
 
 type Pokemon = typeof POKEMON[number]
 type Card = { id: string; text: string; author: Pokemon; createdAt: number; voters: string[] }
-type Board = { columns: Record<string, Card[]>; actionItems: { id: string; text: string; owner: Pokemon; done: boolean }[]; phaseIndex: number; timerEndAt: number | null; timerRunning: boolean; timerMinutes: number }
+type Board = { columns: Record<string, Card[]>; actionItems: { id: string; text: string; owner: Pokemon; done: boolean }[]; phaseIndex: number; timerEndAt: number | null; timerRunning: boolean; timerMinutes: number; participants: string[] }
 
-const freshBoard = (): Board => ({ columns: { wentWell: [], notWell: [], improve: [] }, actionItems: [], phaseIndex: 0, timerEndAt: null, timerRunning: false, timerMinutes: 5 })
+const freshBoard = (): Board => ({ columns: { wentWell: [], notWell: [], improve: [] }, actionItems: [], phaseIndex: 0, timerEndAt: null, timerRunning: false, timerMinutes: 5, participants: [] })
+const IDENTITY_KEY = 'retro-identity-v1'
 const uid = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`
 const pokemonImage = (id: string) => `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/${Number(id)}.png`
 
@@ -45,7 +47,7 @@ function PokemonAvatar({ pokemon, size = 'sm' }: { pokemon: Pokemon; size?: 'sm'
   return <div className={`pokemon-avatar pokemon-avatar-${size}`} title={pokemon[0]}><img src={pokemonImage(pokemon[2])} alt={`${pokemon[0]} avatar`} /></div>
 }
 
-function PokemonPicker({ value, onChange }: { value: Pokemon | null; onChange: (pokemon: Pokemon) => void }) {
+function PokemonPicker({ value, onChange, taken = [] }: { value: Pokemon | null; onChange: (pokemon: Pokemon) => void; taken?: string[] }) {
   const [open, setOpen] = useState(false)
   return <div className="relative">
     <button className="picker-trigger" onClick={() => setOpen(!open)} aria-expanded={open}>
@@ -53,9 +55,9 @@ function PokemonPicker({ value, onChange }: { value: Pokemon | null; onChange: (
       <ChevronRight className={`ml-auto transition-transform ${open ? 'rotate-90' : ''}`} size={17} />
     </button>
     {open && <div className="picker-menu">
-      <div className="picker-heading">เลือกโปเกม่อนที่ชอบ</div>
+      <div className="picker-heading-row"><div className="picker-heading">เลือกโปเกม่อนที่ชอบ</div><button className="picker-close" onClick={() => setOpen(false)} aria-label="ปิด"><X size={16} /></button></div>
       <div className="grid grid-cols-3 gap-2">
-        {POKEMON.map((pokemon) => <button key={pokemon[0]} onClick={() => { onChange(pokemon); setOpen(false) }} className={`pokemon-option ${value?.[0] === pokemon[0] ? 'selected' : ''}`}><PokemonAvatar pokemon={pokemon} size="md" /><span>{pokemon[0]}</span><small>#{pokemon[2]}</small></button>)}
+        {POKEMON.map((pokemon) => { const isTaken = taken.includes(pokemon[0]) && pokemon[0] !== value?.[0]; return <button key={pokemon[0]} disabled={isTaken} onClick={() => { if (isTaken) return; onChange(pokemon); setOpen(false) }} className={`pokemon-option ${value?.[0] === pokemon[0] ? 'selected' : ''} ${isTaken ? 'taken' : ''}`}><PokemonAvatar pokemon={pokemon} size="md" /><span>{pokemon[0]}</span><small>{isTaken ? 'ถูกเลือกแล้ว' : `#${pokemon[2]}`}</small></button> })}
       </div>
     </div>}
   </div>
@@ -76,7 +78,7 @@ export default function Page() {
   const loadBoard = useCallback(async () => {
     try {
       const result = await window.storage.get(STORAGE_KEY, true)
-      if (result?.value) setBoard(JSON.parse(result.value))
+      if (result?.value) { const parsed = JSON.parse(result.value); setBoard({ ...parsed, participants: parsed.participants ?? [] }) }
       else { const next = freshBoard(); await window.storage.set(STORAGE_KEY, JSON.stringify(next), true); setBoard(next) }
     } catch { setBoard(freshBoard()) } finally { setLoading(false) }
   }, [])
@@ -84,8 +86,9 @@ export default function Page() {
   useEffect(() => { const poll = setInterval(() => { if (!suppressPoll.current) loadBoard() }, 3000); return () => clearInterval(poll) }, [loadBoard])
   useEffect(() => { const tick = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(tick) }, [])
   useEffect(() => { setIsHost(new URLSearchParams(window.location.search).get('host') === '1') }, [])
+  useEffect(() => { const savedName = localStorage.getItem(IDENTITY_KEY); const match = POKEMON.find((p) => p[0] === savedName); if (match) { setIdentity(match); setJoined(true) } }, [])
 
-  const save = (next: Board) => { setBoard(next); suppressPoll.current = true; window.storage.set(STORAGE_KEY, JSON.stringify(next), true).finally(() => setTimeout(() => { suppressPoll.current = false }, 1000)) }
+  const save = (next: Board) => { setBoard(next); if (!window.storage) return; suppressPoll.current = true; window.storage.set(STORAGE_KEY, JSON.stringify(next), true).finally(() => setTimeout(() => { suppressPoll.current = false }, 1000)) }
   const clone = () => JSON.parse(JSON.stringify(board)) as Board
   const me = identity?.[0] ?? ''
   const votes = useMemo(() => board ? COLUMNS.reduce((sum, col) => sum + board.columns[col.key].filter((card) => card.voters.includes(me)).length, 0) : 0, [board, me])
@@ -93,9 +96,11 @@ export default function Page() {
   const remaining = board?.timerEndAt ? Math.max(0, Math.floor((board.timerEndAt - now) / 1000)) : (board?.timerMinutes ?? 5) * 60
   const time = `${String(Math.floor(remaining / 60)).padStart(2, '0')}:${String(remaining % 60).padStart(2, '0')}`
 
+  const joinTeam = () => { if (!identity || !board) return; localStorage.setItem(IDENTITY_KEY, identity[0]); setJoined(true); if (!board.participants.includes(identity[0])) { const next = clone(); next.participants.push(identity[0]); save(next) } }
+
   if (!joined) return <main className="join-screen"><div className="join-card">
     <div className="pokeball-mark"><span /></div><p className="eyebrow">POKÉMON RETROSPECTIVE</p><h1>ออกเดินทาง<br /><em>ไปพร้อมกับทีม</em></h1><p className="join-copy">เลือกโปเกม่อนคู่หูของคุณ แล้วมาแชร์ความคิดเห็นใน Sprint นี้กัน</p>
-    <PokemonPicker value={identity} onChange={setIdentity} /><button className="primary-button join-button" disabled={!identity} onClick={() => setJoined(true)}>เข้าร่วมทีม <ChevronRight size={18} /></button>
+    <PokemonPicker value={identity} onChange={setIdentity} taken={board?.participants} /><button className="primary-button join-button" disabled={!identity || !board} onClick={joinTeam}>เข้าร่วมทีม <ChevronRight size={18} /></button>
     <p className="join-note"><Sparkles size={13} /> ไม่ต้องใช้ชื่อจริงในบอร์ดนี้</p>
   </div></main>
   if (loading || !board || !identity) return <main className="loading-screen">กำลังเตรียมสนามต่อสู้...</main>
@@ -107,9 +112,10 @@ export default function Page() {
   const setPhase = (index: number) => { const next = clone(); next.phaseIndex = Math.max(0, Math.min(3, index)); save(next) }
   const startTimer = () => { const next = clone(); next.timerEndAt = Date.now() + minutes * 60000; next.timerRunning = true; next.timerMinutes = minutes; save(next) }
   const resetTimer = () => { const next = clone(); next.timerEndAt = null; next.timerRunning = false; save(next) }
+  const changeIdentity = () => { const next = clone(); next.participants = next.participants.filter((name) => name !== identity[0]); save(next); localStorage.removeItem(IDENTITY_KEY); setIdentity(null); setJoined(false) }
 
   return <main className="app-shell">
-    <header className="topbar"><div className="brand"><div className="brand-ball" /><div><strong>Poké<span>Retro</span></strong><small>TEAM SPRINT ARENA</small></div></div><div className="header-right"><div className="trainer-chip"><PokemonAvatar pokemon={identity} size="sm" /><div><small>กำลังเล่นเป็น</small><b>{identity[0]}</b></div></div>{isHost && <div className="timer"><Clock3 size={17} /><b>{time}</b><input aria-label="นาที" type="number" min={1} max={60} value={minutes} onChange={(e) => setMinutes(Number(e.target.value) || 1)} /><button onClick={startTimer}>เริ่ม</button><button className="icon-button" onClick={resetTimer} aria-label="รีเซ็ตเวลา"><RotateCcw size={15} /></button></div>}</div></header>
+    <header className="topbar"><div className="brand"><div className="brand-ball" /><div><strong>Poké<span>Retro</span></strong><small>TEAM SPRINT ARENA</small></div></div><div className="header-right"><div className="trainer-chip"><PokemonAvatar pokemon={identity} size="sm" /><div><small>กำลังเล่นเป็น</small><b>{identity[0]}</b></div><button className="icon-button" onClick={changeIdentity} aria-label="เปลี่ยนตัว"><Repeat size={14} /></button></div>{isHost && <div className="timer"><Clock3 size={17} /><b>{time}</b><input aria-label="นาที" type="number" min={1} max={60} value={minutes} onChange={(e) => setMinutes(Number(e.target.value) || 1)} /><button onClick={startTimer}>เริ่ม</button><button className="icon-button" onClick={resetTimer} aria-label="รีเซ็ตเวลา"><RotateCcw size={15} /></button></div>}</div></header>
     <section className="hero"><div><p className="eyebrow">SQUAD RETROSPECTIVE · SPRINT 24</p><h1>ทีมของเรา <em>เก่งขึ้น</em><br />ได้อีกแค่ไหน?</h1><p>จับมือคู่หูของคุณ แล้วมาทบทวนการเดินทางครั้งนี้ไปด้วยกัน</p></div><div className="hero-badge"><Sparkles size={17} /><span><b>{votes}/3</b> โหวตที่ใช้ไป</span></div></section>
     <nav className="phase-nav"><button disabled={phase === 0} onClick={() => setPhase(phase - 1)} aria-label="ย้อนกลับ"><ChevronLeft size={18} /></button>{PHASES.map((item, index) => <button key={item} onClick={() => setPhase(index)} className={index === phase ? 'active' : ''}><span>{index + 1}</span>{item}{index === phase && <Check size={14} />}</button>)}<button disabled={phase === 3} onClick={() => setPhase(phase + 1)} aria-label="ถัดไป"><ChevronRight size={18} /></button></nav>
     <div className="phase-hint"><Sparkles size={14} /> {['แต่ละคนเขียนความคิดเห็นลงในคอลัมน์', 'อ่านและพูดคุยโน้ตของทุกคนด้วยกัน', 'แต่ละคนมี 3 โหวต เลือกโน้ตที่สำคัญที่สุด', 'แปลงโน้ตที่โหวตสูงสุดเป็น Action Items'][phase]}</div>
