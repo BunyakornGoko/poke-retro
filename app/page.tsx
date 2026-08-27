@@ -124,7 +124,6 @@ export default function Page() {
   if (!joined) return <main className="join-screen"><div className="join-card">
     <div className="pokeball-mark"><span /></div><p className="eyebrow">POKÉMON RETROSPECTIVE</p><h1>ออกเดินทาง<br /><em>ไปพร้อมกับทีม</em></h1><p className="join-copy">เลือกโปเกม่อนคู่หูของคุณ แล้วมาแชร์ความคิดเห็นใน Sprint นี้กัน</p>
     <PokemonPicker value={identity} onChange={setIdentity} taken={taken} /><button className="primary-button join-button" disabled={!identity || joining} onClick={joinTeam}>เข้าร่วมทีม <ChevronRight size={18} /></button>
-    <p className="join-note"><Sparkles size={13} /> ไม่ต้องใช้ชื่อจริงในบอร์ดนี้</p>
   </div></main>
   if (loading || !board || !identity) return <main className="loading-screen">กำลังเตรียมสนามต่อสู้...</main>
 
